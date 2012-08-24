@@ -1,5 +1,8 @@
 #!/usr/bin/python
-import os, sys, stat, fuse;
+import os
+import sys
+import stat
+import fuse
 
 basepath = '/media/enc/'
 fuse.fuse_python_api = (0, 2)
