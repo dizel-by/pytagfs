@@ -1,13 +1,14 @@
 #!/usr/bin/python
 import os
-import sys
 import stat
 import fuse
+import errno
+import sys
 
-basepath = '/media/enc/'
 fuse.fuse_python_api = (0, 2)
 
-class tagFS(fuse.Fuse) :
+
+class tagFS(fuse.Fuse):
     __file_id = {}
     __filename_id = {}
     __id_file = {}
@@ -15,10 +16,17 @@ class tagFS(fuse.Fuse) :
     __id_tag = {}
     __tag_files = {}
     __file_tags = {}
+    __logfile = 0
+    __basepath = ""
 
     def __init__(self, *args, **kw):
-        fuse.Fuse.__init__(self, *args, **kw)
+        if len(sys.argv) > 2:
+            self.__basepath = sys.argv[1]
+        else:
+            self.__basepath = "/media/enc"
+        self.__logfile = open("/tmp/tags.log", "a")
         self.__read()
+        fuse.Fuse.__init__(self, *args, **kw)
 
     def getattr(self, path):
         st = fuse.Stat()
@@ -38,6 +46,9 @@ class tagFS(fuse.Fuse) :
         else:
             (p, n) = os.path.split(path)
             if n in self.__filename_id:
+                for tag in p.split('/')[1:]:
+                    if not self.__tag_id[tag] in self.__file_tags[self.__filename_id[n]]:
+                        return -errno.ENOENT
                 st.st_mode = stat.S_IFLNK | 0644
                 tmp = os.stat(self.__id_file[self.__filename_id[n]])
                 st.st_uid = tmp.st_uid
@@ -48,7 +59,7 @@ class tagFS(fuse.Fuse) :
                 st.st_ctime = tmp.st_ctime
                 st.st_nlink = tmp.st_nlink
             elif n in self.__tag_id:
-                tmp = os.stat(os.path.join(basepath, "tags", n))
+                tmp = os.stat(os.path.join(self.__basepath, "tags", n))
                 st.st_mode = stat.S_IFDIR | 0755
                 st.st_uid = tmp.st_uid
                 st.st_gid = tmp.st_gid
@@ -62,44 +73,102 @@ class tagFS(fuse.Fuse) :
                     if len(i):
                         tags.add(self.__tag_id[i])
 
-                st.st_nlink = len(self.__findfiles(tags))+len(self.__findchildtags(tags))
+                st.st_nlink = len(self.__findfiles(tags)) + len(self.__findchildtags(tags))
                 st.st_size = 0
             else:
                 return -errno.ENOENT
         return st
 
     def unlink(self, path):
-        (p,n) = os.path.split(path)
-        id = self.__file_id[n]
-        del self.__file_id[n]
-        del self.__id_file[n]
-        del self.__file_tags[id]
-        for i in self.__tag_files:
-            self.__tag_files[i].remove(id)
+        (p, n) = os.path.split(path)
+        fileid = self.__filename_id[n]
+        for tagid in frozenset(self.__file_tags[fileid]):
+            tag = self.__id_tag[tagid]
+            os.unlink(os.path.join(self.__basepath, "tags", tag, n))
+            self.__tag_files[tagid].remove(fileid)
+            self.__file_tags[fileid].remove(tagid)
+
+        return 0
+
+    def __log(self, s):
+        self.__logfile.write(s)
+        self.__logfile.flush()
+
+    def __dump(self):
+        print >>self.__logfile, "ID to FILE"
+        print >>self.__logfile, self.__id_file
+        print >>self.__logfile
+        print >>self.__logfile, "FILE to ID"
+        print >>self.__logfile, self.__file_id
+        print >>self.__logfile
+        print >>self.__logfile, "ID to TAG"
+        print >>self.__logfile, self.__id_tag
+        print >>self.__logfile
+        print >>self.__logfile, "TAG to ID"
+        print >>self.__logfile, self.__tag_id
+        print >>self.__logfile
+        print >>self.__logfile, "FILENAME to ID"
+        print >>self.__logfile, self.__filename_id
+        print >>self.__logfile
+        print >>self.__logfile, "FILE to TAG"
+        print >>self.__logfile, self.__file_tags
+        print >>self.__logfile
+        print >>self.__logfile, "TAG to FILE"
+        print >>self.__logfile, self.__tag_files
+        print >>self.__logfile
+        print >>self.__logfile
+
+    def __addfile(self, filename, path):
+        try:
+            fileid = max(self.__id_file)+1
+        except:
+            fileid = 1
+        self.__file_id[path] = fileid
+        self.__id_file[fileid] = path
+        self.__filename_id[filename] = fileid
+        self.__file_tags[fileid] = set()
+        return fileid
+
+    def symlink(self, targetPath, linkPath):
+        target = os.path.relpath(targetPath, os.path.join(self.__basepath, "tags/tag"))
+
+        filename = targetPath.split("/")[-1:][0]
+
+        if targetPath in self.__file_id:
+            fileid = self.__file_id[targetPath]
+        else:
+            fileid = self.__addfile(filename, targetPath)
+
+        for tag in linkPath.split("/")[1:-1]:
+            tagid = self.__tag_id[tag]
+            self.__file_tags[fileid].add(tagid)
+            self.__tag_files[tagid].add(fileid)
+            try:
+                os.symlink(target, os.path.join(self.__basepath, "tags", tag, filename))
+            except:
+                pass
+#                print "I/O error({0}): {1}".format(e.errno, e.strerror)
+
+        return 0
+
+    def __addtag(self, tag):
+        try:
+            tagid = max(self.__id_tag)+1
+        except:
+            tagid = 1
+        self.__id_tag[tagid] = tag
+        self.__tag_id[tag] = tagid
+        self.__tag_files[tagid] = set()
+        return tagid
 
     def mkdir(self, path, mode):
-        (p,n) = os.path.split(path)
-        id = len(self.__id_tag)+1
-        self.__id_tag[id] = n
-        self.__tag_id[n] = id
-        self.__file_tags[1].add(id)
-        self.__tag_files[id].set([id])
-        os.mkdir(os.path.join(basepath,'tags',n), mode)
-
-    def mknod(self, path, mode, dev):
-        f = open("/tmp/out.txt", "a")
-        f.write("Nod: "+path+" "+str(mode))
-        f.close()
-        (p,n) = os.path.split(path)
-        id = len(self.__id_tag)+1
-        self.__id_tag[id] = n
-        self.__tag_id[n] = id
-        self.__file_tags[1].add(id)
-        self.__tag_files[id].set([id])
-        os.mkdir(os.path.join(basepath,'tags',n), mode)
+        (p, n) = os.path.split(path)
+        self.__addtag(n)
+        ret = os.mkdir(os.path.join(self.__basepath, 'tags', n), mode)
+        return ret
 
     def readlink(self, path):
-        (p,n) = os.path.split(path)
+        (p, n) = os.path.split(path)
         if n in self.__filename_id:
             return self.__id_file[self.__filename_id[n]]
         return ""
@@ -118,39 +187,41 @@ class tagFS(fuse.Fuse) :
         return st
 
     def __read(self):
-        file_max = 0;
-        tag_max = 0;
-        
-        for dirname, dirnames, filenames in os.walk(os.path.join(basepath, "tags")):
+        for dirname in os.listdir(os.path.join(self.__basepath, "tags")):
+            (tmp, tag) = os.path.split(dirname)
+            if not tag in self.__tag_id:
+                self.__addtag(tag)
+
+        for dirname, dirnames, filenames in os.walk(os.path.join(self.__basepath, "tags")):
             for filename in filenames:
                 path = os.path.join(dirname, filename)
                 (tmp, tag) = os.path.split(dirname)
 
                 fullpathname = os.path.abspath(os.path.join(dirname, os.readlink(path)))
                 if not fullpathname in self.__file_id:
-                    file_max += 1
-                    file_i = file_max
-                    self.__file_id[fullpathname] = file_max
-                    self.__id_file[file_i] = fullpathname
-                    self.__filename_id[filename] = file_i
+                    fileid = self.__addfile(filename, fullpathname)
                 else:
-                    file_i = self.__file_id[fullpathname]
-                    
-                if not tag in self.__tag_id:
-                    tag_max += 1
-                    tag_i = tag_max
-                    self.__tag_id[tag] = tag_i
-                    self.__id_tag[tag_i] = tag
-                else:
-                    tag_i = self.__tag_id[tag]
+                    fileid = self.__file_id[fullpathname]
 
-                if not tag_i in self.__tag_files:
-                    self.__tag_files[tag_i] = set()
-                self.__tag_files[tag_i].add(file_i)
+                tagid = self.__tag_id[tag]
+                self.__tag_files[tagid].add(fileid)
 
-                if not file_i in self.__file_tags:
-                    self.__file_tags[file_i] = set()
-                self.__file_tags[file_i].add(tag_i)
+                if not fileid in self.__file_tags:
+                    self.__file_tags[fileid] = set()
+                self.__file_tags[fileid].add(tagid)
+
+    def rmdir(self, path):
+        return -errno.ENOENT
+        (tmp, tag) = os.path.split(path)
+
+        tagid = self.__tag_id[tag]
+        for fileid in self.__tag_files[tagid]:
+            print fileid
+            self.__file_tags[fileid].remove(tagid)
+        del self.__tag_id[tag]
+        del self.__id_tag[tagid]
+        del self.__tag_files[tagid]
+        return 0
 
     def __findfiles(self, tags):
         tmp = set(self.__id_file)
@@ -168,8 +239,7 @@ class tagFS(fuse.Fuse) :
         yield fuse.Direntry('.')
         yield fuse.Direntry('..')
         if path == '/':
-            tags = self.__findchildtags(set([]))
-            for i in tags:
+            for i in self.__id_tag:
                 yield fuse.Direntry(self.__id_tag[i])
         else:
             tags = set()
@@ -186,10 +256,12 @@ class tagFS(fuse.Fuse) :
                 (p, name) = os.path.split(self.__id_file[i])
                 yield fuse.Direntry(name)
 
+
 def runTagFS():
-    usage='Tag FS ' + fuse.Fuse.fusage
-    fs = tagFS(version="%prog " + fuse.__version__,usage=usage,dash_s_do='setsingle')
+    usage = 'Tag FS ' + fuse.Fuse.fusage
+    fs = tagFS(version="%prog " + fuse.__version__, usage=usage, dash_s_do='setsingle')
     fs.parse(errex=1)
     fs.main()
 
 runTagFS()
+
