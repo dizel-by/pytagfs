@@ -21,7 +21,7 @@ class tagFS(fuse.Fuse):
 
     def __init__(self, *args, **kw):
         if len(sys.argv) > 2:
-            self.__basepath = sys.argv[1]
+            self.__basepath = os.path.abspath(sys.argv[1])
         else:
             self.__basepath = "/media/enc"
         self.__logfile = open("/tmp/tags.log", "a")
