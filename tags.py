@@ -21,7 +21,7 @@ class tagFS(fuse.Fuse):
 
     def __init__(self, *args, **kw):
         if len(sys.argv) > 2:
-            self.__basepath = sys.argv[1]
+            self.__basepath = os.path.abspath(sys.argv[1])
         else:
             self.__basepath = "/media/enc"
         self.__logfile = open("/tmp/tags.log", "a")
@@ -130,13 +130,15 @@ class tagFS(fuse.Fuse):
         return fileid
 
     def symlink(self, targetPath, linkPath):
+        if not os.path.isabs(targetPath) or not os.path.isfile(targetPath):
+            # TODO: syslog("Refusing to create a symlink: either oldpath is not absolute or there is no such file in filesystem")
+            return -errno.EFAULT
+
         target = os.path.relpath(targetPath, os.path.join(self.__basepath, "tags/tag"))
+        filename = os.path.basename(targetPath)
 
-        filename = targetPath.split("/")[-1:][0]
-
-        if targetPath in self.__file_id:
-            fileid = self.__file_id[targetPath]
-        else:
+        fileid = self.__file_id.get(targetPath)
+        if fileid is None:
             fileid = self.__addfile(filename, targetPath)
 
         for tag in linkPath.split("/")[1:-1]:
