@@ -82,11 +82,12 @@ class tagFS(fuse.Fuse):
     def unlink(self, path):
         (p, n) = os.path.split(path)
         fileid = self.__filename_id[n]
-        for tagid in frozenset(self.__file_tags[fileid]):
-            tag = self.__id_tag[tagid]
-            os.unlink(os.path.join(self.__basepath, "tags", tag, n))
-            self.__tag_files[tagid].remove(fileid)
-            self.__file_tags[fileid].remove(tagid)
+        for tag in p.split('/'):
+            if len(tag):
+                tagid = self.__tag_id[tag]
+                os.unlink(os.path.join(self.__basepath, "tags", tag, n))
+                self.__tag_files[tagid].remove(fileid)
+                self.__file_tags[fileid].remove(tagid)
 
         return 0
 

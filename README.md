@@ -67,7 +67,6 @@ You can see what's going on by checking the test/ directory insides (I'll use gi
  D test/tags/tag3/file1
  D test/tags/tag4/file1
 </pre>
-As you can see the link to file1 was deleted from relevant tag directories. Note, there is currently no way to remove a file from just one tag, it's all or nothing.
 
 Ok then, now I'm going to add a tag and then tag an existing file.
 <pre>
